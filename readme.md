@@ -4,7 +4,7 @@ Automatische Synchronisation von SharePoint-Listen zu Microsoft Teams Kontakten.
 
 ## 🚀 Ein-Klick Deployment
 
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FIhrUsername%2Fsharepoint-contact-sync%2Fmain%2Fazuredeploy.json)
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fleifbln%2Fsharepoint-contact-sync%2Fmain%2Fazuredeploy.json)
 
 ## Was wird deployed?
 
@@ -23,4 +23,4 @@ Automatische Synchronisation von SharePoint-Listen zu Microsoft Teams Kontakten.
 
 ## Support
 
-Bei Fragen: [Issues erstellen](https://github.com/IhrUsername/sharepoint-contact-sync/issues)
+Bei Fragen: [Issues erstellen](https://github.com/leifbln/sharepoint-contact-sync/issues)
