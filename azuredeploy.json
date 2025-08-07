@@ -1,0 +1,48 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "title": "SharePoint Contact Sync",
+    "description": "Automatische SharePoint zu Teams Kontakte Synchronisation"
+  },
+  "parameters": {
+    "customerName": {
+      "type": "string",
+      "metadata": {
+        "description": "Kunde Name"
+      }
+    },
+    "adminEmail": {
+      "type": "string",
+      "metadata": {
+        "description": "Administrator E-Mail"
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]"
+    }
+  },
+  "variables": {
+    "deploymentId": "[take(uniqueString(resourceGroup().id), 8)]",
+    "functionAppName": "[concat('func-sp-sync-', variables('deploymentId'))]",
+    "functionCodeUrl": "https://github.com/IhrUsername/sharepoint-contact-sync/releases/latest/download/function-app.zip"
+  },
+  "resources": [
+    // ... Alle Azure Ressourcen wie vorher
+    {
+      "type": "Microsoft.Web/sites",
+      "properties": {
+        "siteConfig": {
+          "appSettings": [
+            {
+              "name": "WEBSITE_RUN_FROM_PACKAGE",
+              "value": "[variables('functionCodeUrl')]"
+            }
+            // ... andere Settings
+          ]
+        }
+      }
+    }
+  ]
+}
