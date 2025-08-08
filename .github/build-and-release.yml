@@ -1,0 +1,101 @@
+name: Build and Release Function App
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'function-app/**'
+  workflow_dispatch:
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Create function app package
+      run: |
+        cd function-app
+        zip -r ../function-app.zip . -x "*.git*" "*.DS_Store*" "node_modules/*"
+        cd ..
+        
+    - name: Get commit info
+      id: commit
+      run: |
+        echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+        echo "timestamp=$(date +%Y%m%d%H%M%S)" >> $GITHUB_OUTPUT
+        
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: release-${{ steps.commit.outputs.timestamp }}
+        release_name: Function App Release ${{ steps.commit.outputs.timestamp }}
+        body: |
+          **SharePoint Contact Sync Function App**
+          
+          Automated release created from commit: ${{ steps.commit.outputs.sha_short }}
+          
+          ### Changes
+          - Updated function app code
+          - Ready for Azure deployment
+          
+          ### Deployment
+          Use this ZIP file URL in your ARM template:
+          ```
+          https://github.com/${{ github.repository }}/releases/download/release-${{ steps.commit.outputs.timestamp }}/function-app.zip
+          ```
+        draft: false
+        prerelease: false
+        
+    - name: Upload Function App ZIP
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./function-app.zip
+        asset_name: function-app.zip
+        asset_content_type: application/zip
+        
+    - name: Update latest release
+      run: |
+        # Delete old 'latest' tag and release if it exists
+        git tag -d latest || true
+        git push origin :refs/tags/latest || true
+        
+        # Create new 'latest' tag
+        git tag latest
+        git push origin latest
+        
+    - name: Create Latest Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: latest
+        release_name: Latest Function App
+        body: |
+          **Latest SharePoint Contact Sync Function App**
+          
+          This is always the most recent version.
+          Use this URL in your ARM template for automatic updates:
+          ```
+          https://github.com/${{ github.repository }}/releases/latest/download/function-app.zip
+          ```
+        draft: false
+        prerelease: false
+        
+    - name: Upload Latest Function App ZIP
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./function-app.zip
+        asset_name: function-app.zip
+        asset_content_type: application/zip
