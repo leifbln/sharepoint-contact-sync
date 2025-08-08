@@ -101,7 +101,8 @@
       "name": "[format('{0}/add', variables('keyVaultName'))]",
       "dependsOn": [
         "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]",
-        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]"
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]",
+        "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]"
       ],
       "properties": {
         "accessPolicies": [
@@ -115,10 +116,20 @@
                 "list"
               ]
             }
+          },
+          {
+            "tenantId": "[subscription().tenantId]",
+            "objectId": "[reference(resourceId('Microsoft.Web/sites', variables('functionAppName')), '2022-09-01', 'Full').identity.principalId]",
+            "permissions": {
+              "secrets": [
+                "get",
+                "list"
+              ]
+            }
           }
         ]
       }
-    },
+    }
     {
       "type": "Microsoft.Resources/deploymentScripts",
       "apiVersion": "2023-08-01",
@@ -236,30 +247,6 @@
         },
         "httpsOnly": true
       }
-    },
-    {
-      "type": "Microsoft.KeyVault/vaults/accessPolicies",
-      "apiVersion": "2023-07-01",
-      "name": "[format('{0}/add', variables('keyVaultName'))]",
-      "dependsOn": [
-        "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]",
-        "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
-      ],
-      "properties": {
-        "accessPolicies": [
-          {
-            "tenantId": "[subscription().tenantId]",
-            "objectId": "[reference(resourceId('Microsoft.Web/sites', variables('functionAppName')), '2022-09-01', 'Full').identity.principalId]",
-            "permissions": {
-              "secrets": [
-                "get",
-                "list"
-              ]
-            }
-          }
-        ]
-      }
-    }
   ],
   "outputs": {
     "deploymentId": {
