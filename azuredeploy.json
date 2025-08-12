@@ -2,8 +2,8 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
   "contentVersion": "1.0.0.0",
   "metadata": {
-    "title": "SharePoint Contact Sync - Production Ready",
-    "description": "Enterprise-ready deployment template with guided setup process",
+    "title": "SharePoint Contact Sync - Production Ready (Simplified)",
+    "description": "Enterprise-ready deployment template with minimal complexity",
     "version": "1.0.0",
     "author": "SharePoint Contact Sync Team"
   },
@@ -49,7 +49,6 @@
     "keyVaultName": "[concat('kv-', variables('namingPrefix'))]",
     "appInsightsName": "[concat('ai-', variables('namingPrefix'))]",
     "appServicePlanName": "[concat('asp-', variables('namingPrefix'))]",
-    "managedIdentityName": "[concat('mi-', variables('namingPrefix'))]",
     "commonTags": {
       "Application": "SharePoint Contact Sync",
       "Environment": "[parameters('environment')]",
@@ -132,13 +131,6 @@
       "properties": {
         "reserved": false
       }
-    },
-    {
-      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
-      "apiVersion": "2023-01-31",
-      "name": "[variables('managedIdentityName')]",
-      "location": "[parameters('location')]",
-      "tags": "[variables('commonTags')]"
     },
     {
       "type": "Microsoft.Web/sites",
@@ -255,29 +247,34 @@
     {
       "type": "Microsoft.KeyVault/vaults/secrets",
       "apiVersion": "2023-07-01",
-      "name": "[format('{0}/DeploymentInfo', variables('keyVaultName'))]",
+      "name": "[format('{0}/DeploymentId', variables('keyVaultName'))]",
       "dependsOn": [
         "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
       ],
       "properties": {
-        "value": "[string(createObject('deploymentId', variables('deploymentId'), 'functionAppName', variables('functionAppName'), 'functionAppUrl', format('https://{0}.azurewebsites.net', variables('functionAppName')), 'keyVaultName', variables('keyVaultName'), 'tenantId', subscription().tenantId, 'customerName', parameters('customerName'), 'adminEmail', parameters('adminEmail'), 'environment', parameters('environment'), 'deploymentDate', utcNow('yyyy-MM-ddTHH:mm:ssZ')))]",
-        "attributes": {
-          "enabled": true
-        }
+        "value": "[variables('deploymentId')]"
       }
     },
     {
       "type": "Microsoft.KeyVault/vaults/secrets",
       "apiVersion": "2023-07-01",
-      "name": "[format('{0}/SetupStatus', variables('keyVaultName'))]",
+      "name": "[format('{0}/TenantId', variables('keyVaultName'))]",
       "dependsOn": [
         "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
       ],
       "properties": {
-        "value": "[string(createObject('infrastructure_deployed', true, 'app_registration_completed', false, 'admin_consent_granted', false, 'sharepoint_configured', false, 'setup_completed', false, 'last_updated', utcNow('yyyy-MM-ddTHH:mm:ssZ')))]",
-        "attributes": {
-          "enabled": true
-        }
+        "value": "[subscription().tenantId]"
+      }
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults/secrets",
+      "apiVersion": "2023-07-01",
+      "name": "[format('{0}/FunctionAppUrl', variables('keyVaultName'))]",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
+      ],
+      "properties": {
+        "value": "[format('https://{0}.azurewebsites.net', variables('functionAppName'))]"
       }
     }
   ],
@@ -295,36 +292,19 @@
         }
       }
     },
-    "nextSteps": {
-      "type": "object",
-      "value": {
-        "step1": {
-          "title": "Create App Registration",
-          "description": "Create Azure AD App Registration manually or using provided script",
-          "action": "Follow the setup guide or run the PowerShell script"
-        },
-        "step2": {
-          "title": "Configure Application",
-          "description": "Set up SharePoint connections and sync settings",
-          "action": "[format('Visit: https://{0}.azurewebsites.net/api/setup', variables('functionAppName'))]"
-        },
-        "step3": {
-          "title": "Test & Verify",
-          "description": "Test the sync functionality and verify configuration",
-          "action": "[format('Test at: https://{0}.azurewebsites.net/api/test', variables('functionAppName'))]"
-        }
-      }
-    },
     "resourceDetails": {
       "type": "object",
       "value": {
+        "functionAppName": "[variables('functionAppName')]",
         "functionAppUrl": "[format('https://{0}.azurewebsites.net', variables('functionAppName'))]",
+        "keyVaultName": "[variables('keyVaultName')]",
         "keyVaultUrl": "[reference(resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))).vaultUri]",
         "setupUrl": "[format('https://{0}.azurewebsites.net/api/setup', variables('functionAppName'))]",
         "testUrl": "[format('https://{0}.azurewebsites.net/api/test', variables('functionAppName'))]",
         "tenantId": "[subscription().tenantId]",
         "subscriptionId": "[subscription().subscriptionId]",
-        "resourceGroupName": "[resourceGroup().name]"
+        "resourceGroupName": "[resourceGroup().name]",
+        "deploymentId": "[variables('deploymentId')]"
       }
     },
     "setupInstructions": {
@@ -337,16 +317,37 @@
         "   • Use Azure Portal (recommended for enterprise environments)",
         "   • Or run the provided PowerShell setup script",
         "",
-        "2️⃣ Configure Application:",
+        "2️⃣ Store App Registration credentials in Key Vault:",
+        "[format('   • ClientId, ClientSecret, TenantId in: {0}', variables('keyVaultName'))]",
+        "",
+        "3️⃣ Configure Application:",
         "[format('   • Visit: https://{0}.azurewebsites.net/api/setup', variables('functionAppName'))]",
         "   • Follow the guided setup process",
         "",
-        "3️⃣ Test Configuration:",
+        "4️⃣ Test Configuration:",
         "[format('   • Test sync: https://{0}.azurewebsites.net/api/test', variables('functionAppName'))]",
         "",
-        "📖 For detailed setup instructions, see the documentation.",
+        "📖 For detailed setup instructions, see the provided documentation.",
         "🔧 For technical support, contact your administrator."
       ]
+    },
+    "keyVaultSecrets": {
+      "type": "object",
+      "value": {
+        "required": [
+          "ClientId - App Registration Client ID",
+          "ClientSecret - App Registration Client Secret", 
+          "TenantId - Azure AD Tenant ID (already stored)"
+        ],
+        "optional": [
+          "AdminConsentUrl - URL for admin consent",
+          "SharePointConfig - Configuration JSON"
+        ],
+        "prePopulated": [
+          "DeploymentId - Unique deployment identifier",
+          "FunctionAppUrl - Function App URL"
+        ]
+      }
     }
   }
 }
