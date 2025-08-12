@@ -110,7 +110,6 @@
         "enableRbacAuthorization": false,
         "enableSoftDelete": true,
         "softDeleteRetentionInDays": 7,
-        "enablePurgeProtection": false,
         "networkAcls": {
           "defaultAction": "Allow",
           "bypass": "AzureServices"
