@@ -2,8 +2,8 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
   "contentVersion": "1.0.0.0",
   "metadata": {
-    "title": "SharePoint Contact Sync - Simple & Working",
-    "description": "Garantiert funktionierendes ARM Template mit einfachem App Registration Script"
+    "title": "SharePoint Contact Sync - Mit Graph API Berechtigungen",
+    "description": "ARM Template mit erweiterten Berechtigungen für Managed Identity"
   },
   "parameters": {
     "customerName": {
@@ -34,7 +34,8 @@
     "appInsightsName": "[concat('ai-sp-github-', variables('deploymentId'))]",
     "appServicePlanName": "[concat('asp-sp-github-', variables('deploymentId'))]",
     "managedIdentityName": "[concat('mi-deployment-', variables('deploymentId'))]",
-    "deploymentScriptName": "[concat('ds-app-reg-', variables('deploymentId'))]"
+    "deploymentScriptName": "[concat('ds-app-reg-', variables('deploymentId'))]",
+    "permissionScriptName": "[concat('ds-permissions-', variables('deploymentId'))]"
   },
   "resources": [
     {
@@ -94,6 +95,53 @@
       "apiVersion": "2023-01-31",
       "name": "[variables('managedIdentityName')]",
       "location": "[parameters('location')]"
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "name": "[guid(resourceGroup().id, variables('managedIdentityName'), 'Application Administrator')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]"
+      ],
+      "properties": {
+        "roleDefinitionId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/9b895d92-2cd3-44c7-9d02-a6ac2d5ea5c3')]",
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal"
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deploymentScripts",
+      "apiVersion": "2023-08-01",
+      "name": "[variables('permissionScriptName')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]",
+        "[resourceId('Microsoft.Authorization/roleAssignments', guid(resourceGroup().id, variables('managedIdentityName'), 'Application Administrator'))]"
+      ],
+      "identity": {
+        "type": "UserAssigned",
+        "userAssignedIdentities": {
+          "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]": {}
+        }
+      },
+      "kind": "AzurePowerShell",
+      "properties": {
+        "azPowerShellVersion": "10.0",
+        "retentionInterval": "PT4H",
+        "timeout": "PT30M",
+        "cleanupPreference": "OnSuccess",
+        "environmentVariables": [
+          {
+            "name": "MANAGED_IDENTITY_OBJECT_ID",
+            "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), '2023-01-31').principalId]"
+          },
+          {
+            "name": "TENANT_ID",
+            "value": "[subscription().tenantId]"
+          }
+        ],
+        "scriptContent": "param([string]$ManagedIdentityObjectId = $env:MANAGED_IDENTITY_OBJECT_ID, [string]$TenantId = $env:TENANT_ID);\nWrite-Host 'Setting Graph API Permissions for Managed Identity';\ntry {\n  Connect-AzAccount -Identity;\n  $context = Get-AzContext;\n  Write-Host \"Connected: $($context.Account.Id)\";\n  \n  # Get access token for Microsoft Graph\n  $token = [Microsoft.Azure.Commands.Common.Authentication.AzureSession]::Instance.AuthenticationFactory.Authenticate($context.Account, $context.Environment, $TenantId, $null, 'https://graph.microsoft.com/', $null).AccessToken;\n  Write-Host 'Got Graph API token';\n  \n  # Headers for Graph API\n  $headers = @{\n    'Authorization' = \"Bearer $token\"\n    'Content-Type' = 'application/json'\n  };\n  \n  # Microsoft Graph Service Principal\n  $graphAppId = '00000003-0000-0000-c000-000000000000';\n  $graphSpUri = \"https://graph.microsoft.com/v1.0/servicePrincipals?`$filter=appId eq '$graphAppId'\";\n  $graphSp = (Invoke-RestMethod -Uri $graphSpUri -Headers $headers -Method GET).value[0];\n  Write-Host \"Found Graph SP: $($graphSp.id)\";\n  \n  # Required permissions\n  $requiredPermissions = @(\n    'Application.ReadWrite.All',\n    'AppRoleAssignment.ReadWrite.All'\n  );\n  \n  foreach ($permission in $requiredPermissions) {\n    $appRole = $graphSp.appRoles | Where-Object { $_.value -eq $permission };\n    if ($appRole) {\n      $assignmentBody = @{\n        principalId = $ManagedIdentityObjectId\n        resourceId = $graphSp.id\n        appRoleId = $appRole.id\n      } | ConvertTo-Json;\n      \n      $assignmentUri = 'https://graph.microsoft.com/v1.0/servicePrincipals/{0}/appRoleAssignments' -f $ManagedIdentityObjectId;\n      \n      try {\n        Invoke-RestMethod -Uri $assignmentUri -Headers $headers -Method POST -Body $assignmentBody;\n        Write-Host \"✓ Assigned: $permission\";\n      } catch {\n        if ($_.Exception.Response.StatusCode -eq 409) {\n          Write-Host \"! Already assigned: $permission\";\n        } else {\n          Write-Warning \"Failed to assign $permission : $($_.Exception.Message)\";\n        }\n      }\n    } else {\n      Write-Warning \"Permission not found: $permission\";\n    }\n  };\n  \n  Write-Host 'Graph API permissions configured';\n  $DeploymentScriptOutputs = @{ status = 'success'; message = 'Permissions set successfully' };\n  \n} catch {\n  Write-Error \"Failed: $($_.Exception.Message)\";\n  $DeploymentScriptOutputs = @{ status = 'error'; error = $_.Exception.Message };\n}"
+      }
     },
     {
       "type": "Microsoft.Web/sites",
@@ -216,7 +264,8 @@
       "name": "[variables('deploymentScriptName')]",
       "location": "[parameters('location')]",
       "dependsOn": [
-        "[resourceId('Microsoft.KeyVault/vaults/accessPolicies', variables('keyVaultName'), 'add')]"
+        "[resourceId('Microsoft.KeyVault/vaults/accessPolicies', variables('keyVaultName'), 'add')]",
+        "[resourceId('Microsoft.Resources/deploymentScripts', variables('permissionScriptName'))]"
       ],
       "identity": {
         "type": "UserAssigned",
@@ -244,7 +293,7 @@
             "value": "[subscription().tenantId]"
           }
         ],
-        "scriptContent": "param([string]$KeyVaultName = $env:KEY_VAULT_NAME, [string]$FunctionAppUrl = $env:FUNCTION_APP_URL, [string]$TenantId = $env:TENANT_ID);\nWrite-Host 'REST API App Registration Script';\ntry {\n  Connect-AzAccount -Identity;\n  $context = Get-AzContext;\n  Write-Host \"Connected: $($context.Account.Id)\";\n  \n  # Get access token for Microsoft Graph\n  $token = [Microsoft.Azure.Commands.Common.Authentication.AzureSession]::Instance.AuthenticationFactory.Authenticate($context.Account, $context.Environment, $TenantId, $null, 'https://graph.microsoft.com/', $null).AccessToken;\n  Write-Host 'Got Graph API token';\n  \n  # Headers for Graph API\n  $headers = @{\n    'Authorization' = \"Bearer $token\"\n    'Content-Type' = 'application/json'\n  };\n  \n  # Delete existing apps via REST API\n  $searchUri = \"https://graph.microsoft.com/v1.0/applications?`$filter=displayName eq 'SharePoint Contact Sync'\";\n  $existingApps = Invoke-RestMethod -Uri $searchUri -Headers $headers -Method GET;\n  foreach ($app in $existingApps.value) {\n    $deleteUri = \"https://graph.microsoft.com/v1.0/applications/$($app.id)\";\n    Invoke-RestMethod -Uri $deleteUri -Headers $headers -Method DELETE;\n    Write-Host \"Deleted app: $($app.appId)\";\n  };\n  \n  # Create new app via REST API\n  $appBody = @{\n    displayName = 'SharePoint Contact Sync'\n    requiredResourceAccess = @(\n      @{\n        resourceAppId = '00000003-0000-0000-c000-000000000000'\n        resourceAccess = @(\n          @{ id = '332a536c-c7ef-4017-ab91-336970924f0d'; type = 'Role' },\n          @{ id = 'd56682ec-c09e-4743-aaf4-1a3aac4caa21'; type = 'Role' },\n          @{ id = 'df021288-bdef-4463-88db-98f22de89214'; type = 'Role' }\n        )\n      }\n    )\n    web = @{\n      redirectUris = @('https://login.microsoftonline.com/common/oauth2/nativeclient')\n    }\n  } | ConvertTo-Json -Depth 10;\n  \n  $createUri = 'https://graph.microsoft.com/v1.0/applications';\n  $newApp = Invoke-RestMethod -Uri $createUri -Headers $headers -Method POST -Body $appBody;\n  Write-Host \"Created app: $($newApp.appId)\";\n  \n  # Create service principal\n  $spBody = @{ appId = $newApp.appId } | ConvertTo-Json;\n  $spUri = 'https://graph.microsoft.com/v1.0/servicePrincipals';\n  $sp = Invoke-RestMethod -Uri $spUri -Headers $headers -Method POST -Body $spBody;\n  Write-Host \"Created SP: $($sp.id)\";\n  \n  # Create client secret\n  $secretBody = @{\n    passwordCredential = @{\n      displayName = 'SharePoint Contact Sync Secret'\n      endDateTime = (Get-Date).AddYears(2).ToString('yyyy-MM-ddTHH:mm:ss.fffZ')\n    }\n  } | ConvertTo-Json -Depth 5;\n  \n  $secretUri = \"https://graph.microsoft.com/v1.0/applications/$($newApp.id)/addPassword\";\n  $secret = Invoke-RestMethod -Uri $secretUri -Headers $headers -Method POST -Body $secretBody;\n  Write-Host 'Created client secret';\n  \n  # Store in Key Vault\n  Set-AzKeyVaultSecret -VaultName $KeyVaultName -Name 'ClientId' -SecretValue (ConvertTo-SecureString $newApp.appId -AsPlainText -Force);\n  Set-AzKeyVaultSecret -VaultName $KeyVaultName -Name 'ClientSecret' -SecretValue (ConvertTo-SecureString $secret.secretText -AsPlainText -Force);\n  Set-AzKeyVaultSecret -VaultName $KeyVaultName -Name 'TenantId' -SecretValue (ConvertTo-SecureString $TenantId -AsPlainText -Force);\n  \n  $adminConsentUrl = \"https://login.microsoftonline.com/$TenantId/adminconsent?client_id=$($newApp.appId)\";\n  Set-AzKeyVaultSecret -VaultName $KeyVaultName -Name 'AdminConsentUrl' -SecretValue (ConvertTo-SecureString $adminConsentUrl -AsPlainText -Force);\n  Set-AzKeyVaultSecret -VaultName $KeyVaultName -Name 'SetupUrl' -SecretValue (ConvertTo-SecureString \"$FunctionAppUrl/api/setup\" -AsPlainText -Force);\n  \n  $config = @{sharepoint_configs=@();global_settings=@{setup_completed=$false}} | ConvertTo-Json -Depth 10;\n  Set-AzKeyVaultSecret -VaultName $KeyVaultName -Name 'SharePointConfig' -SecretValue (ConvertTo-SecureString $config -AsPlainText -Force);\n  \n  $DeploymentScriptOutputs = @{\n    status = 'success'\n    appId = $newApp.appId\n    adminConsentUrl = $adminConsentUrl\n    setupUrl = \"$FunctionAppUrl/api/setup\"\n    message = 'App Registration created via REST API'\n  };\n  \n  Write-Host \"SUCCESS: App $($newApp.appId) created\";\n  Write-Host \"Admin Consent: $adminConsentUrl\";\n  \n} catch {\n  Write-Error \"Failed: $($_.Exception.Message)\";\n  $DeploymentScriptOutputs = @{\n    status = 'error'\n    error = $_.Exception.Message\n  };\n}"
+        "scriptContent": "param([string]$KeyVaultName = $env:KEY_VAULT_NAME, [string]$FunctionAppUrl = $env:FUNCTION_APP_URL, [string]$TenantId = $env:TENANT_ID);\nWrite-Host 'REST API App Registration Script';\ntry {\n  Connect-AzAccount -Identity;\n  $context = Get-AzContext;\n  Write-Host \"Connected: $($context.Account.Id)\";\n  \n  # Wait a bit for permissions to propagate\n  Start-Sleep -Seconds 30;\n  \n  # Get access token for Microsoft Graph\n  $token = [Microsoft.Azure.Commands.Common.Authentication.AzureSession]::Instance.AuthenticationFactory.Authenticate($context.Account, $context.Environment, $TenantId, $null, 'https://graph.microsoft.com/', $null).AccessToken;\n  Write-Host 'Got Graph API token';\n  \n  # Headers for Graph API\n  $headers = @{\n    'Authorization' = \"Bearer $token\"\n    'Content-Type' = 'application/json'\n  };\n  \n  # Delete existing apps via REST API\n  $searchUri = \"https://graph.microsoft.com/v1.0/applications?`$filter=displayName eq 'SharePoint Contact Sync'\";\n  $existingApps = Invoke-RestMethod -Uri $searchUri -Headers $headers -Method GET;\n  foreach ($app in $existingApps.value) {\n    $deleteUri = \"https://graph.microsoft.com/v1.0/applications/$($app.id)\";\n    Invoke-RestMethod -Uri $deleteUri -Headers $headers -Method DELETE;\n    Write-Host \"Deleted app: $($app.appId)\";\n  };\n  \n  # Create new app via REST API\n  $appBody = @{\n    displayName = 'SharePoint Contact Sync'\n    requiredResourceAccess = @(\n      @{\n        resourceAppId = '00000003-0000-0000-c000-000000000000'\n        resourceAccess = @(\n          @{ id = '332a536c-c7ef-4017-ab91-336970924f0d'; type = 'Role' },\n          @{ id = 'd56682ec-c09e-4743-aaf4-1a3aac4caa21'; type = 'Role' },\n          @{ id = 'df021288-bdef-4463-88db-98f22de89214'; type = 'Role' }\n        )\n      }\n    )\n    web = @{\n      redirectUris = @('https://login.microsoftonline.com/common/oauth2/nativeclient')\n    }\n  } | ConvertTo-Json -Depth 10;\n  \n  $createUri = 'https://graph.microsoft.com/v1.0/applications';\n  $newApp = Invoke-RestMethod -Uri $createUri -Headers $headers -Method POST -Body $appBody;\n  Write-Host \"Created app: $($newApp.appId)\";\n  \n  # Create service principal\n  $spBody = @{ appId = $newApp.appId } | ConvertTo-Json;\n  $spUri = 'https://graph.microsoft.com/v1.0/servicePrincipals';\n  $sp = Invoke-RestMethod -Uri $spUri -Headers $headers -Method POST -Body $spBody;\n  Write-Host \"Created SP: $($sp.id)\";\n  \n  # Create client secret\n  $secretBody = @{\n    passwordCredential = @{\n      displayName = 'SharePoint Contact Sync Secret'\n      endDateTime = (Get-Date).AddYears(2).ToString('yyyy-MM-ddTHH:mm:ss.fffZ')\n    }\n  } | ConvertTo-Json -Depth 5;\n  \n  $secretUri = \"https://graph.microsoft.com/v1.0/applications/$($newApp.id)/addPassword\";\n  $secret = Invoke-RestMethod -Uri $secretUri -Headers $headers -Method POST -Body $secretUri;\n  Write-Host 'Created client secret';\n  \n  # Store in Key Vault\n  Set-AzKeyVaultSecret -VaultName $KeyVaultName -Name 'ClientId' -SecretValue (ConvertTo-SecureString $newApp.appId -AsPlainText -Force);\n  Set-AzKeyVaultSecret -VaultName $KeyVaultName -Name 'ClientSecret' -SecretValue (ConvertTo-SecureString $secret.secretText -AsPlainText -Force);\n  Set-AzKeyVaultSecret -VaultName $KeyVaultName -Name 'TenantId' -SecretValue (ConvertTo-SecureString $TenantId -AsPlainText -Force);\n  \n  $adminConsentUrl = \"https://login.microsoftonline.com/$TenantId/adminconsent?client_id=$($newApp.appId)\";\n  Set-AzKeyVaultSecret -VaultName $KeyVaultName -Name 'AdminConsentUrl' -SecretValue (ConvertTo-SecureString $adminConsentUrl -AsPlainText -Force);\n  Set-AzKeyVaultSecret -VaultName $KeyVaultName -Name 'SetupUrl' -SecretValue (ConvertTo-SecureString \"$FunctionAppUrl/api/setup\" -AsPlainText -Force);\n  \n  $config = @{sharepoint_configs=@();global_settings=@{setup_completed=$false}} | ConvertTo-Json -Depth 10;\n  Set-AzKeyVaultSecret -VaultName $KeyVaultName -Name 'SharePointConfig' -SecretValue (ConvertTo-SecureString $config -AsPlainText -Force);\n  \n  $DeploymentScriptOutputs = @{\n    status = 'success'\n    appId = $newApp.appId\n    adminConsentUrl = $adminConsentUrl\n    setupUrl = \"$FunctionAppUrl/api/setup\"\n    message = 'App Registration created via REST API'\n  };\n  \n  Write-Host \"SUCCESS: App $($newApp.appId) created\";\n  Write-Host \"Admin Consent: $adminConsentUrl\";\n  \n} catch {\n  Write-Error \"Failed: $($_.Exception.Message)\";\n  $DeploymentScriptOutputs = @{\n    status = 'error'\n    error = $_.Exception.Message\n  };\n}"
       }
     }
   ],
@@ -264,6 +313,10 @@
     "keyVaultName": {
       "type": "string",
       "value": "[variables('keyVaultName')]"
+    },
+    "permissionResult": {
+      "type": "object",
+      "value": "[reference(variables('permissionScriptName')).outputs]"
     },
     "appRegistrationResult": {
       "type": "object",
