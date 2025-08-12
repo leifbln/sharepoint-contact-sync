@@ -2,40 +2,61 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
   "contentVersion": "1.0.0.0",
   "metadata": {
-    "title": "SharePoint Contact Sync - Mit Graph API Berechtigungen",
-    "description": "ARM Template mit erweiterten Berechtigungen für Managed Identity"
+    "title": "SharePoint Contact Sync - Production Ready",
+    "description": "Enterprise-ready deployment template with guided setup process",
+    "version": "1.0.0",
+    "author": "SharePoint Contact Sync Team"
   },
   "parameters": {
     "customerName": {
       "type": "string",
+      "maxLength": 20,
       "metadata": {
-        "description": "Name des Kunden"
+        "description": "Customer/Organization name (used for resource naming)"
       }
     },
     "adminEmail": {
       "type": "string",
       "metadata": {
-        "description": "Administrator E-Mail"
+        "description": "Administrator email address for notifications"
       }
     },
     "location": {
       "type": "string",
       "defaultValue": "[resourceGroup().location]",
       "metadata": {
-        "description": "Azure Region"
+        "description": "Azure region for all resources"
+      }
+    },
+    "environment": {
+      "type": "string",
+      "defaultValue": "prod",
+      "allowedValues": [
+        "dev",
+        "test",
+        "prod"
+      ],
+      "metadata": {
+        "description": "Environment type for resource tagging and naming"
       }
     }
   },
   "variables": {
     "deploymentId": "[take(uniqueString(resourceGroup().id, deployment().name), 8)]",
-    "functionAppName": "[concat('func-sp-github-', variables('deploymentId'))]",
-    "storageAccountName": "[concat('stspgithub', variables('deploymentId'))]",
-    "keyVaultName": "[concat('kv-sp-github-', variables('deploymentId'))]",
-    "appInsightsName": "[concat('ai-sp-github-', variables('deploymentId'))]",
-    "appServicePlanName": "[concat('asp-sp-github-', variables('deploymentId'))]",
-    "managedIdentityName": "[concat('mi-deployment-', variables('deploymentId'))]",
-    "deploymentScriptName": "[concat('ds-app-reg-', variables('deploymentId'))]",
-    "permissionScriptName": "[concat('ds-permissions-', variables('deploymentId'))]"
+    "namingPrefix": "[concat('sp-contact-sync-', variables('deploymentId'))]",
+    "functionAppName": "[concat('func-', variables('namingPrefix'))]",
+    "storageAccountName": "[concat('st', replace(variables('namingPrefix'), '-', ''))]",
+    "keyVaultName": "[concat('kv-', variables('namingPrefix'))]",
+    "appInsightsName": "[concat('ai-', variables('namingPrefix'))]",
+    "appServicePlanName": "[concat('asp-', variables('namingPrefix'))]",
+    "managedIdentityName": "[concat('mi-', variables('namingPrefix'))]",
+    "commonTags": {
+      "Application": "SharePoint Contact Sync",
+      "Environment": "[parameters('environment')]",
+      "Customer": "[parameters('customerName')]",
+      "DeploymentId": "[variables('deploymentId')]",
+      "Version": "1.0.0"
+    }
   },
   "resources": [
     {
@@ -43,13 +64,18 @@
       "apiVersion": "2022-09-01",
       "name": "[variables('storageAccountName')]",
       "location": "[parameters('location')]",
+      "tags": "[variables('commonTags')]",
       "sku": {
         "name": "Standard_LRS"
       },
       "kind": "StorageV2",
       "properties": {
         "supportsHttpsTrafficOnly": true,
-        "minimumTlsVersion": "TLS1_2"
+        "minimumTlsVersion": "TLS1_2",
+        "allowBlobPublicAccess": false,
+        "networkAcls": {
+          "defaultAction": "Allow"
+        }
       }
     },
     {
@@ -57,10 +83,13 @@
       "apiVersion": "2020-02-02",
       "name": "[variables('appInsightsName')]",
       "location": "[parameters('location')]",
+      "tags": "[variables('commonTags')]",
       "kind": "web",
       "properties": {
         "Application_Type": "web",
-        "RetentionInDays": 90
+        "RetentionInDays": 90,
+        "publicNetworkAccessForIngestion": "Enabled",
+        "publicNetworkAccessForQuery": "Enabled"
       }
     },
     {
@@ -68,6 +97,7 @@
       "apiVersion": "2023-07-01",
       "name": "[variables('keyVaultName')]",
       "location": "[parameters('location')]",
+      "tags": "[variables('commonTags')]",
       "properties": {
         "sku": {
           "family": "A",
@@ -75,7 +105,16 @@
         },
         "tenantId": "[subscription().tenantId]",
         "enabledForTemplateDeployment": true,
+        "enabledForDiskEncryption": false,
+        "enabledForDeployment": false,
         "enableRbacAuthorization": false,
+        "enableSoftDelete": true,
+        "softDeleteRetentionInDays": 7,
+        "enablePurgeProtection": false,
+        "networkAcls": {
+          "defaultAction": "Allow",
+          "bypass": "AzureServices"
+        },
         "accessPolicies": []
       }
     },
@@ -84,70 +123,29 @@
       "apiVersion": "2022-09-01",
       "name": "[variables('appServicePlanName')]",
       "location": "[parameters('location')]",
+      "tags": "[variables('commonTags')]",
       "sku": {
         "name": "Y1",
         "tier": "Dynamic"
       },
-      "kind": "functionapp"
+      "kind": "functionapp",
+      "properties": {
+        "reserved": false
+      }
     },
     {
       "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
       "apiVersion": "2023-01-31",
       "name": "[variables('managedIdentityName')]",
-      "location": "[parameters('location')]"
-    },
-    {
-      "type": "Microsoft.Authorization/roleAssignments",
-      "apiVersion": "2022-04-01",
-      "name": "[guid(resourceGroup().id, variables('managedIdentityName'), 'Application Administrator')]",
-      "dependsOn": [
-        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]"
-      ],
-      "properties": {
-        "roleDefinitionId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/9b895d92-2cd3-44c7-9d02-a6ac2d5ea5c3')]",
-        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), '2023-01-31').principalId]",
-        "principalType": "ServicePrincipal"
-      }
-    },
-    {
-      "type": "Microsoft.Resources/deploymentScripts",
-      "apiVersion": "2023-08-01",
-      "name": "[variables('permissionScriptName')]",
       "location": "[parameters('location')]",
-      "dependsOn": [
-        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]",
-        "[resourceId('Microsoft.Authorization/roleAssignments', guid(resourceGroup().id, variables('managedIdentityName'), 'Application Administrator'))]"
-      ],
-      "identity": {
-        "type": "UserAssigned",
-        "userAssignedIdentities": {
-          "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]": {}
-        }
-      },
-      "kind": "AzurePowerShell",
-      "properties": {
-        "azPowerShellVersion": "10.0",
-        "retentionInterval": "PT4H",
-        "timeout": "PT30M",
-        "cleanupPreference": "OnSuccess",
-        "environmentVariables": [
-          {
-            "name": "MANAGED_IDENTITY_OBJECT_ID",
-            "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), '2023-01-31').principalId]"
-          },
-          {
-            "name": "TENANT_ID",
-            "value": "[subscription().tenantId]"
-          }
-        ],
-        "scriptContent": "param([string]$ManagedIdentityObjectId = $env:MANAGED_IDENTITY_OBJECT_ID, [string]$TenantId = $env:TENANT_ID);\nWrite-Host 'Setting Graph API Permissions for Managed Identity';\ntry {\n  Connect-AzAccount -Identity;\n  $context = Get-AzContext;\n  Write-Host \"Connected: $($context.Account.Id)\";\n  \n  # Get access token for Microsoft Graph\n  $token = [Microsoft.Azure.Commands.Common.Authentication.AzureSession]::Instance.AuthenticationFactory.Authenticate($context.Account, $context.Environment, $TenantId, $null, 'https://graph.microsoft.com/', $null).AccessToken;\n  Write-Host 'Got Graph API token';\n  \n  # Headers for Graph API\n  $headers = @{\n    'Authorization' = \"Bearer $token\"\n    'Content-Type' = 'application/json'\n  };\n  \n  # Microsoft Graph Service Principal\n  $graphAppId = '00000003-0000-0000-c000-000000000000';\n  $graphSpUri = \"https://graph.microsoft.com/v1.0/servicePrincipals?`$filter=appId eq '$graphAppId'\";\n  $graphSp = (Invoke-RestMethod -Uri $graphSpUri -Headers $headers -Method GET).value[0];\n  Write-Host \"Found Graph SP: $($graphSp.id)\";\n  \n  # Required permissions\n  $requiredPermissions = @(\n    'Application.ReadWrite.All',\n    'AppRoleAssignment.ReadWrite.All'\n  );\n  \n  foreach ($permission in $requiredPermissions) {\n    $appRole = $graphSp.appRoles | Where-Object { $_.value -eq $permission };\n    if ($appRole) {\n      $assignmentBody = @{\n        principalId = $ManagedIdentityObjectId\n        resourceId = $graphSp.id\n        appRoleId = $appRole.id\n      } | ConvertTo-Json;\n      \n      $assignmentUri = 'https://graph.microsoft.com/v1.0/servicePrincipals/{0}/appRoleAssignments' -f $ManagedIdentityObjectId;\n      \n      try {\n        Invoke-RestMethod -Uri $assignmentUri -Headers $headers -Method POST -Body $assignmentBody;\n        Write-Host \"✓ Assigned: $permission\";\n      } catch {\n        if ($_.Exception.Response.StatusCode -eq 409) {\n          Write-Host \"! Already assigned: $permission\";\n        } else {\n          Write-Warning \"Failed to assign $permission : $($_.Exception.Message)\";\n        }\n      }\n    } else {\n      Write-Warning \"Permission not found: $permission\";\n    }\n  };\n  \n  Write-Host 'Graph API permissions configured';\n  $DeploymentScriptOutputs = @{ status = 'success'; message = 'Permissions set successfully' };\n  \n} catch {\n  Write-Error \"Failed: $($_.Exception.Message)\";\n  $DeploymentScriptOutputs = @{ status = 'error'; error = $_.Exception.Message };\n}"
-      }
+      "tags": "[variables('commonTags')]"
     },
     {
       "type": "Microsoft.Web/sites",
       "apiVersion": "2022-09-01",
       "name": "[variables('functionAppName')]",
       "location": "[parameters('location')]",
+      "tags": "[variables('commonTags')]",
       "kind": "functionapp",
       "dependsOn": [
         "[resourceId('Microsoft.Web/serverfarms', variables('appServicePlanName'))]",
@@ -211,6 +209,10 @@
               "value": "[parameters('adminEmail')]"
             },
             {
+              "name": "ENVIRONMENT",
+              "value": "[parameters('environment')]"
+            },
+            {
               "name": "WEBSITE_RUN_FROM_PACKAGE",
               "value": "https://github.com/leifbln/sharepoint-contact-sync/releases/latest/download/function-app.zip"
             }
@@ -218,9 +220,13 @@
           "powerShellVersion": "7.4",
           "use32BitWorkerProcess": false,
           "ftpsState": "Disabled",
-          "minTlsVersion": "1.2"
+          "minTlsVersion": "1.2",
+          "scmMinTlsVersion": "1.2",
+          "http20Enabled": true,
+          "remoteDebuggingEnabled": false
         },
-        "httpsOnly": true
+        "httpsOnly": true,
+        "publicNetworkAccess": "Enabled"
       }
     },
     {
@@ -229,22 +235,10 @@
       "name": "[format('{0}/add', variables('keyVaultName'))]",
       "dependsOn": [
         "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]",
-        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]",
         "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]"
       ],
       "properties": {
         "accessPolicies": [
-          {
-            "tenantId": "[subscription().tenantId]",
-            "objectId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), '2023-01-31').principalId]",
-            "permissions": {
-              "secrets": [
-                "get",
-                "set",
-                "list"
-              ]
-            }
-          },
           {
             "tenantId": "[subscription().tenantId]",
             "objectId": "[reference(resourceId('Microsoft.Web/sites', variables('functionAppName')), '2022-09-01', 'Full').identity.principalId]",
@@ -259,84 +253,99 @@
       }
     },
     {
-      "type": "Microsoft.Resources/deploymentScripts",
-      "apiVersion": "2023-08-01",
-      "name": "[variables('deploymentScriptName')]",
-      "location": "[parameters('location')]",
+      "type": "Microsoft.KeyVault/vaults/secrets",
+      "apiVersion": "2023-07-01",
+      "name": "[format('{0}/DeploymentInfo', variables('keyVaultName'))]",
       "dependsOn": [
-        "[resourceId('Microsoft.KeyVault/vaults/accessPolicies', variables('keyVaultName'), 'add')]",
-        "[resourceId('Microsoft.Resources/deploymentScripts', variables('permissionScriptName'))]"
+        "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
       ],
-      "identity": {
-        "type": "UserAssigned",
-        "userAssignedIdentities": {
-          "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]": {}
-        }
-      },
-      "kind": "AzurePowerShell",
       "properties": {
-        "azPowerShellVersion": "10.0",
-        "retentionInterval": "PT4H",
-        "timeout": "PT30M",
-        "cleanupPreference": "OnSuccess",
-        "environmentVariables": [
-          {
-            "name": "KEY_VAULT_NAME",
-            "value": "[variables('keyVaultName')]"
-          },
-          {
-            "name": "FUNCTION_APP_URL",
-            "value": "[format('https://{0}.azurewebsites.net', variables('functionAppName'))]"
-          },
-          {
-            "name": "TENANT_ID",
-            "value": "[subscription().tenantId]"
-          }
-        ],
-        "scriptContent": "param([string]$KeyVaultName = $env:KEY_VAULT_NAME, [string]$FunctionAppUrl = $env:FUNCTION_APP_URL, [string]$TenantId = $env:TENANT_ID);\nWrite-Host 'REST API App Registration Script';\ntry {\n  Connect-AzAccount -Identity;\n  $context = Get-AzContext;\n  Write-Host \"Connected: $($context.Account.Id)\";\n  \n  # Wait a bit for permissions to propagate\n  Start-Sleep -Seconds 30;\n  \n  # Get access token for Microsoft Graph\n  $token = [Microsoft.Azure.Commands.Common.Authentication.AzureSession]::Instance.AuthenticationFactory.Authenticate($context.Account, $context.Environment, $TenantId, $null, 'https://graph.microsoft.com/', $null).AccessToken;\n  Write-Host 'Got Graph API token';\n  \n  # Headers for Graph API\n  $headers = @{\n    'Authorization' = \"Bearer $token\"\n    'Content-Type' = 'application/json'\n  };\n  \n  # Delete existing apps via REST API\n  $searchUri = \"https://graph.microsoft.com/v1.0/applications?`$filter=displayName eq 'SharePoint Contact Sync'\";\n  $existingApps = Invoke-RestMethod -Uri $searchUri -Headers $headers -Method GET;\n  foreach ($app in $existingApps.value) {\n    $deleteUri = \"https://graph.microsoft.com/v1.0/applications/$($app.id)\";\n    Invoke-RestMethod -Uri $deleteUri -Headers $headers -Method DELETE;\n    Write-Host \"Deleted app: $($app.appId)\";\n  };\n  \n  # Create new app via REST API\n  $appBody = @{\n    displayName = 'SharePoint Contact Sync'\n    requiredResourceAccess = @(\n      @{\n        resourceAppId = '00000003-0000-0000-c000-000000000000'\n        resourceAccess = @(\n          @{ id = '332a536c-c7ef-4017-ab91-336970924f0d'; type = 'Role' },\n          @{ id = 'd56682ec-c09e-4743-aaf4-1a3aac4caa21'; type = 'Role' },\n          @{ id = 'df021288-bdef-4463-88db-98f22de89214'; type = 'Role' }\n        )\n      }\n    )\n    web = @{\n      redirectUris = @('https://login.microsoftonline.com/common/oauth2/nativeclient')\n    }\n  } | ConvertTo-Json -Depth 10;\n  \n  $createUri = 'https://graph.microsoft.com/v1.0/applications';\n  $newApp = Invoke-RestMethod -Uri $createUri -Headers $headers -Method POST -Body $appBody;\n  Write-Host \"Created app: $($newApp.appId)\";\n  \n  # Create service principal\n  $spBody = @{ appId = $newApp.appId } | ConvertTo-Json;\n  $spUri = 'https://graph.microsoft.com/v1.0/servicePrincipals';\n  $sp = Invoke-RestMethod -Uri $spUri -Headers $headers -Method POST -Body $spBody;\n  Write-Host \"Created SP: $($sp.id)\";\n  \n  # Create client secret\n  $secretBody = @{\n    passwordCredential = @{\n      displayName = 'SharePoint Contact Sync Secret'\n      endDateTime = (Get-Date).AddYears(2).ToString('yyyy-MM-ddTHH:mm:ss.fffZ')\n    }\n  } | ConvertTo-Json -Depth 5;\n  \n  $secretUri = \"https://graph.microsoft.com/v1.0/applications/$($newApp.id)/addPassword\";\n  $secret = Invoke-RestMethod -Uri $secretUri -Headers $headers -Method POST -Body $secretUri;\n  Write-Host 'Created client secret';\n  \n  # Store in Key Vault\n  Set-AzKeyVaultSecret -VaultName $KeyVaultName -Name 'ClientId' -SecretValue (ConvertTo-SecureString $newApp.appId -AsPlainText -Force);\n  Set-AzKeyVaultSecret -VaultName $KeyVaultName -Name 'ClientSecret' -SecretValue (ConvertTo-SecureString $secret.secretText -AsPlainText -Force);\n  Set-AzKeyVaultSecret -VaultName $KeyVaultName -Name 'TenantId' -SecretValue (ConvertTo-SecureString $TenantId -AsPlainText -Force);\n  \n  $adminConsentUrl = \"https://login.microsoftonline.com/$TenantId/adminconsent?client_id=$($newApp.appId)\";\n  Set-AzKeyVaultSecret -VaultName $KeyVaultName -Name 'AdminConsentUrl' -SecretValue (ConvertTo-SecureString $adminConsentUrl -AsPlainText -Force);\n  Set-AzKeyVaultSecret -VaultName $KeyVaultName -Name 'SetupUrl' -SecretValue (ConvertTo-SecureString \"$FunctionAppUrl/api/setup\" -AsPlainText -Force);\n  \n  $config = @{sharepoint_configs=@();global_settings=@{setup_completed=$false}} | ConvertTo-Json -Depth 10;\n  Set-AzKeyVaultSecret -VaultName $KeyVaultName -Name 'SharePointConfig' -SecretValue (ConvertTo-SecureString $config -AsPlainText -Force);\n  \n  $DeploymentScriptOutputs = @{\n    status = 'success'\n    appId = $newApp.appId\n    adminConsentUrl = $adminConsentUrl\n    setupUrl = \"$FunctionAppUrl/api/setup\"\n    message = 'App Registration created via REST API'\n  };\n  \n  Write-Host \"SUCCESS: App $($newApp.appId) created\";\n  Write-Host \"Admin Consent: $adminConsentUrl\";\n  \n} catch {\n  Write-Error \"Failed: $($_.Exception.Message)\";\n  $DeploymentScriptOutputs = @{\n    status = 'error'\n    error = $_.Exception.Message\n  };\n}"
+        "value": "[string(createObject('deploymentId', variables('deploymentId'), 'functionAppName', variables('functionAppName'), 'functionAppUrl', format('https://{0}.azurewebsites.net', variables('functionAppName')), 'keyVaultName', variables('keyVaultName'), 'tenantId', subscription().tenantId, 'customerName', parameters('customerName'), 'adminEmail', parameters('adminEmail'), 'environment', parameters('environment'), 'deploymentDate', utcNow('yyyy-MM-ddTHH:mm:ssZ')))]",
+        "attributes": {
+          "enabled": true
+        }
+      }
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults/secrets",
+      "apiVersion": "2023-07-01",
+      "name": "[format('{0}/SetupStatus', variables('keyVaultName'))]",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
+      ],
+      "properties": {
+        "value": "[string(createObject('infrastructure_deployed', true, 'app_registration_completed', false, 'admin_consent_granted', false, 'sharepoint_configured', false, 'setup_completed', false, 'last_updated', utcNow('yyyy-MM-ddTHH:mm:ssZ')))]",
+        "attributes": {
+          "enabled": true
+        }
       }
     }
   ],
   "outputs": {
-    "deploymentId": {
-      "type": "string",
-      "value": "[variables('deploymentId')]"
-    },
-    "functionAppName": {
-      "type": "string",
-      "value": "[variables('functionAppName')]"
-    },
-    "functionAppUrl": {
-      "type": "string",
-      "value": "[format('https://{0}.azurewebsites.net', variables('functionAppName'))]"
-    },
-    "keyVaultName": {
-      "type": "string",
-      "value": "[variables('keyVaultName')]"
-    },
-    "permissionResult": {
+    "deploymentSummary": {
       "type": "object",
-      "value": "[reference(variables('permissionScriptName')).outputs]"
-    },
-    "appRegistrationResult": {
-      "type": "object",
-      "value": "[reference(variables('deploymentScriptName')).outputs]"
-    },
-    "adminConsentUrl": {
-      "type": "string",
-      "value": "[if(contains(reference(variables('deploymentScriptName')).outputs, 'adminConsentUrl'), reference(variables('deploymentScriptName')).outputs.adminConsentUrl, 'SCRIPT_FAILED')]"
-    },
-    "setupUrl": {
-      "type": "string",
-      "value": "[format('https://{0}.azurewebsites.net/api/setup', variables('functionAppName'))]"
+      "value": {
+        "status": "SUCCESS",
+        "deploymentId": "[variables('deploymentId')]",
+        "resourcesCreated": {
+          "functionApp": "[variables('functionAppName')]",
+          "keyVault": "[variables('keyVaultName')]",
+          "storageAccount": "[variables('storageAccountName')]",
+          "appInsights": "[variables('appInsightsName')]"
+        }
+      }
     },
     "nextSteps": {
+      "type": "object",
+      "value": {
+        "step1": {
+          "title": "Create App Registration",
+          "description": "Create Azure AD App Registration manually or using provided script",
+          "action": "Follow the setup guide or run the PowerShell script"
+        },
+        "step2": {
+          "title": "Configure Application",
+          "description": "Set up SharePoint connections and sync settings",
+          "action": "[format('Visit: https://{0}.azurewebsites.net/api/setup', variables('functionAppName'))]"
+        },
+        "step3": {
+          "title": "Test & Verify",
+          "description": "Test the sync functionality and verify configuration",
+          "action": "[format('Test at: https://{0}.azurewebsites.net/api/test', variables('functionAppName'))]"
+        }
+      }
+    },
+    "resourceDetails": {
+      "type": "object",
+      "value": {
+        "functionAppUrl": "[format('https://{0}.azurewebsites.net', variables('functionAppName'))]",
+        "keyVaultUrl": "[reference(resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))).vaultUri]",
+        "setupUrl": "[format('https://{0}.azurewebsites.net/api/setup', variables('functionAppName'))]",
+        "testUrl": "[format('https://{0}.azurewebsites.net/api/test', variables('functionAppName'))]",
+        "tenantId": "[subscription().tenantId]",
+        "subscriptionId": "[subscription().subscriptionId]",
+        "resourceGroupName": "[resourceGroup().name]"
+      }
+    },
+    "setupInstructions": {
       "type": "array",
       "value": [
-        "✅ Infrastructure deployed",
-        "[format('🔐 Admin Consent: {0}', if(contains(reference(variables('deploymentScriptName')).outputs, 'adminConsentUrl'), reference(variables('deploymentScriptName')).outputs.adminConsentUrl, 'Check deployment script logs'))]",
-        "[format('⚙️ Setup SharePoint: https://{0}.azurewebsites.net/api/setup', variables('functionAppName'))]",
-        "[format('🧪 Test Sync: https://{0}.azurewebsites.net/api/SharePointSync', variables('functionAppName'))]"
+        "🎉 Infrastructure deployment completed successfully!",
+        "",
+        "📋 Next Steps:",
+        "1️⃣ Create App Registration:",
+        "   • Use Azure Portal (recommended for enterprise environments)",
+        "   • Or run the provided PowerShell setup script",
+        "",
+        "2️⃣ Configure Application:",
+        "[format('   • Visit: https://{0}.azurewebsites.net/api/setup', variables('functionAppName'))]",
+        "   • Follow the guided setup process",
+        "",
+        "3️⃣ Test Configuration:",
+        "[format('   • Test sync: https://{0}.azurewebsites.net/api/test', variables('functionAppName'))]",
+        "",
+        "📖 For detailed setup instructions, see the documentation.",
+        "🔧 For technical support, contact your administrator."
       ]
     }
   }
