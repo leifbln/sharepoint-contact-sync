@@ -39,6 +39,13 @@
       "metadata": {
         "description": "Environment type for resource tagging and naming"
       }
+    },
+    "deploymentTimestamp": {
+      "type": "string",
+      "defaultValue": "[utcNow('yyyy-MM-ddTHH:mm:ssZ')]",
+      "metadata": {
+        "description": "Timestamp of deployment (automatically generated)"
+      }
     }
   },
   "variables": {
@@ -259,7 +266,7 @@
         "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
       ],
       "properties": {
-        "value": "[concat('{\"deploymentId\":\"', variables('deploymentId'), '\",\"functionAppName\":\"', variables('functionAppName'), '\",\"functionAppUrl\":\"', format('https://{0}.azurewebsites.net', variables('functionAppName')), '\",\"keyVaultName\":\"', variables('keyVaultName'), '\",\"tenantId\":\"', subscription().tenantId, '\",\"customerName\":\"', parameters('customerName'), '\",\"adminEmail\":\"', parameters('adminEmail'), '\",\"environment\":\"', parameters('environment'), '\",\"deploymentDate\":\"', utcNow('yyyy-MM-ddTHH:mm:ssZ'), '\"}')]",
+        "value": "[concat('{\"deploymentId\":\"', variables('deploymentId'), '\",\"functionAppName\":\"', variables('functionAppName'), '\",\"functionAppUrl\":\"', format('https://{0}.azurewebsites.net', variables('functionAppName')), '\",\"keyVaultName\":\"', variables('keyVaultName'), '\",\"tenantId\":\"', subscription().tenantId, '\",\"customerName\":\"', parameters('customerName'), '\",\"adminEmail\":\"', parameters('adminEmail'), '\",\"environment\":\"', parameters('environment'), '\",\"deploymentDate\":\"', parameters('deploymentTimestamp'), '\"}')]",
         "attributes": {
           "enabled": true
         }
@@ -273,7 +280,7 @@
         "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
       ],
       "properties": {
-        "value": "[concat('{\"infrastructure_deployed\":true,\"app_registration_completed\":false,\"admin_consent_granted\":false,\"sharepoint_configured\":false,\"setup_completed\":false,\"last_updated\":\"', utcNow('yyyy-MM-ddTHH:mm:ssZ'), '\"}')]",
+        "value": "[concat('{\"infrastructure_deployed\":true,\"app_registration_completed\":false,\"admin_consent_granted\":false,\"sharepoint_configured\":false,\"setup_completed\":false,\"last_updated\":\"', parameters('deploymentTimestamp'), '\"}')]",
         "attributes": {
           "enabled": true
         }
